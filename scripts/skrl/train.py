@@ -25,11 +25,15 @@ parser.add_argument("--video_interval", type=int, default=2000, help="Interval b
 parser.add_argument("--num_envs", type=int, default=None, help="Number of environments to simulate.")
 parser.add_argument("--task", type=str, default=None, help="Name of the task.")
 parser.add_argument("--seed", type=int, default=None, help="Seed used for the environment")
+
+# --distributed: 布尔标志，启用多GPU或多节点分布式训练
 parser.add_argument(
     "--distributed", action="store_true", default=False, help="Run training with multiple GPUs or nodes."
 )
 parser.add_argument("--checkpoint", type=str, default=None, help="Path to model checkpoint to resume training.")
 parser.add_argument("--max_iterations", type=int, default=None, help="RL Policy training iterations.")
+
+# 机器学习框架选择
 parser.add_argument(
     "--ml_framework",
     type=str,
@@ -37,6 +41,8 @@ parser.add_argument(
     choices=["torch", "jax", "jax-numpy"],
     help="The ML framework used for training the skrl agent.",
 )
+
+# 强化学习算法选择
 parser.add_argument(
     "--algorithm",
     type=str,
@@ -103,21 +109,26 @@ from isaaclab_tasks.utils.hydra import hydra_task_config
 import isaac_lab_tutorial.tasks  # noqa: F401
 
 # config shortcuts
-algorithm = args_cli.algorithm.lower()
+algorithm = args_cli.algorithm.lower() # 将命令行参数中指定的算法名称转换为小写
+# 对于PPO算法：使用通用入口点 "skrl_cfg_entry_point"
+# 对于其他算法：使用特定算法入口点，如 "skrl_ippo_cfg_entry_point"、"skrl_mappo_cfg_entry_point"
 agent_cfg_entry_point = "skrl_cfg_entry_point" if algorithm in ["ppo"] else f"skrl_{algorithm}_cfg_entry_point"
 
+#  main 函数是强化学习训练的主入口点，使用了 Hydra 配置装饰器来加载任务配置：
+# args_cli.task: 从命令行参数获取任务名称
+# agent_cfg_entry_point: 根据算法确定配置入口点
 
 @hydra_task_config(args_cli.task, agent_cfg_entry_point)
 def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agent_cfg: dict):
     """Train with skrl agent."""
-    # override configurations with non-hydra CLI arguments
+    # override configurations with non-hydra CLI arguments 用命令行参数覆盖文件中的环境设置
     env_cfg.scene.num_envs = args_cli.num_envs if args_cli.num_envs is not None else env_cfg.scene.num_envs
     env_cfg.sim.device = args_cli.device if args_cli.device is not None else env_cfg.sim.device
 
-    # multi-gpu training config
+    # multi-gpu training config 如果启用分布式训练，为每个进程分配不同的GPU设备
     if args_cli.distributed:
         env_cfg.sim.device = f"cuda:{app_launcher.local_rank}"
-    # max iterations for training
+    # max iterations for training 根据命令行参数设置最大训练步数
     if args_cli.max_iterations:
         agent_cfg["trainer"]["timesteps"] = args_cli.max_iterations * agent_cfg["agent"]["rollouts"]
     agent_cfg["trainer"]["close_environment_at_exit"] = False
@@ -149,7 +160,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     # update log_dir
     log_dir = os.path.join(log_root_path, log_dir)
 
-    # dump the configuration into log-directory
+    # dump the configuration into log-directory 配置文件保存
     dump_yaml(os.path.join(log_dir, "params", "env.yaml"), env_cfg)
     dump_yaml(os.path.join(log_dir, "params", "agent.yaml"), agent_cfg)
     dump_pickle(os.path.join(log_dir, "params", "env.pkl"), env_cfg)
@@ -158,7 +169,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     # get checkpoint path (to resume training)
     resume_path = retrieve_file_path(args_cli.checkpoint) if args_cli.checkpoint else None
 
-    # create isaac environment
+    # create isaac environment 环境创建与包装
     env = gym.make(args_cli.task, cfg=env_cfg, render_mode="rgb_array" if args_cli.video else None)
 
     # convert to single-agent instance if required by the RL algorithm
@@ -177,11 +188,12 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         print_dict(video_kwargs, nesting=4)
         env = gym.wrappers.RecordVideo(env, **video_kwargs)
 
-    # wrap around environment for skrl
+    # wrap around environment for skrl 创建Gym环境并包装为skrl兼容格式
     env = SkrlVecEnvWrapper(env, ml_framework=args_cli.ml_framework)  # same as: `wrap_env(env, wrapper="auto")`
 
     # configure and instantiate the skrl runner
     # https://skrl.readthedocs.io/en/latest/api/utils/runner.html
+    # 执行训练 配置并运行skrl训练器
     runner = Runner(env, agent_cfg)
 
     # load checkpoint (if specified)

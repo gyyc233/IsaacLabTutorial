@@ -96,17 +96,19 @@ import isaac_lab_tutorial.tasks  # noqa: F401
 # config shortcuts
 algorithm = args_cli.algorithm.lower()
 
-
+# 播放，运行已经训练好的强化学习智能体模型
 def main():
     """Play with skrl agent."""
     # configure the ML framework into the global skrl variable
     if args_cli.ml_framework.startswith("jax"):
         skrl.config.jax.backend = "jax" if args_cli.ml_framework == "jax" else "numpy"
 
-    # parse configuration
+    # parse configuration 解析环境配置，支持命令行参数覆盖，支持指定设备、环境数量和是否禁用fabric
     env_cfg = parse_env_cfg(
         args_cli.task, device=args_cli.device, num_envs=args_cli.num_envs, use_fabric=not args_cli.disable_fabric
     )
+
+    # 尝试加载特定算法配置，失败则使用通用配置
     try:
         experiment_cfg = load_cfg_from_registry(args_cli.task, f"skrl_{algorithm}_cfg_entry_point")
     except ValueError:
@@ -130,7 +132,7 @@ def main():
         )
     log_dir = os.path.dirname(os.path.dirname(resume_path))
 
-    # create isaac environment
+    # create isaac environment 创建gym环境
     env = gym.make(args_cli.task, cfg=env_cfg, render_mode="rgb_array" if args_cli.video else None)
 
     # convert to single-agent instance if required by the RL algorithm
@@ -155,7 +157,7 @@ def main():
         print_dict(video_kwargs, nesting=4)
         env = gym.wrappers.RecordVideo(env, **video_kwargs)
 
-    # wrap around environment for skrl
+    # wrap around environment for skrl 环境包装为skrl兼容形式
     env = SkrlVecEnvWrapper(env, ml_framework=args_cli.ml_framework)  # same as: `wrap_env(env, wrapper="auto")`
 
     # configure and instantiate the skrl runner
@@ -163,8 +165,9 @@ def main():
     experiment_cfg["trainer"]["close_environment_at_exit"] = False
     experiment_cfg["agent"]["experiment"]["write_interval"] = 0  # don't log to TensorBoard
     experiment_cfg["agent"]["experiment"]["checkpoint_interval"] = 0  # don't generate checkpoints
-    runner = Runner(env, experiment_cfg)
+    runner = Runner(env, experiment_cfg) # 创建skrl运行器实例
 
+    # 模型加载设置为评估模式
     print(f"[INFO] Loading model checkpoint from: {resume_path}")
     runner.agent.load(resume_path)
     # set agent to evaluation mode
@@ -173,19 +176,20 @@ def main():
     # reset environment
     obs, _ = env.reset()
     timestep = 0
-    # simulate environment
+    # simulate environment 推理循环
     while simulation_app.is_running():
         start_time = time.time()
 
-        # run everything in inference mode
+        # run everything in inference mode 在推理模式下运行
         with torch.inference_mode():
             # agent stepping
             outputs = runner.agent.act(obs, timestep=0, timesteps=0)
-            # - multi-agent (deterministic) actions
+            # - multi-agent (deterministic) actions 多代理环境
             if hasattr(env, "possible_agents"):
                 actions = {a: outputs[-1][a].get("mean_actions", outputs[0][a]) for a in env.possible_agents}
             # - single-agent (deterministic) actions
             else:
+                # 单代理环境
                 actions = outputs[-1].get("mean_actions", outputs[0])
             # env stepping
             obs, _, _, _, _ = env.step(actions)
